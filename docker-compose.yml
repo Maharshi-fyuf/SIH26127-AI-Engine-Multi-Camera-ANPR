@@ -1,0 +1,11 @@
+services:
+  yuvatech-api:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./evidence_output:/app/evidence_output
+      - ./models:/app/models:ro
+    restart: unless-stopped

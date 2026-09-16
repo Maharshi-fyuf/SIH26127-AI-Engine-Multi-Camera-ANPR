@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+data/
+models/*.pt
+models/*.onnx
+evidence_output/*
+!evidence_output/.gitkeep

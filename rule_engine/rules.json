@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "violation_type": "RED_LIGHT_VIOLATION",
+      "relevant_confidence_keys": ["track", "detection", "signal"],
+      "conditions": [
+        {"fact": "signal_state", "op": "==", "value": "RED"},
+        {"fact": "crossed_stop_line", "op": "==", "value": true},
+        {"fact": "persistence_frames", "op": ">=", "value": 5}
+      ]
+    },
+    {
+      "violation_type": "NO_HELMET_VIOLATION",
+      "relevant_confidence_keys": ["track", "detection", "helmet"],
+      "conditions": [
+        {"fact": "vehicle_class", "op": "==", "value": "motorcycle"},
+        {"fact": "has_helmet", "op": "==", "value": false},
+        {"fact": "persistence_frames", "op": ">=", "value": 5}
+      ]
+    },
+    {
+      "violation_type": "TRIPLE_RIDING_VIOLATION",
+      "relevant_confidence_keys": ["track", "detection", "person"],
+      "conditions": [
+        {"fact": "vehicle_class", "op": "==", "value": "motorcycle"},
+        {"fact": "rider_count", "op": ">=", "value": 3},
+        {"fact": "persistence_frames", "op": ">=", "value": 3}
+      ]
+    },
+    {
+      "violation_type": "NO_SEATBELT_VIOLATION",
+      "relevant_confidence_keys": ["track", "detection", "seatbelt"],
+      "conditions": [
+        {"fact": "vehicle_class", "op": "==", "value": "car"},
+        {"fact": "seatbelt_fastened", "op": "==", "value": false},
+        {"fact": "persistence_frames", "op": ">=", "value": 3}
+      ]
+    }
+  ]
+}
