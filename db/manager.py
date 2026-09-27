@@ -38,16 +38,25 @@ class DatabaseManager:
 
     def _get_connection(self):
         conn = sqlite3.connect(self.db_path, timeout=30.0, isolation_level="DEFERRED", factory=_RetryConnection)
-        # WAL permits readers while a writer is active; busy_timeout + retry cursor
-        # absorb short multi-camera contention instead of surfacing "database is locked".
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    @contextmanager
+    def _connection(self):
+        conn = self._get_connection()
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _init_schema(self):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             
             # Camera table
@@ -106,6 +115,9 @@ class DatabaseManager:
                     status TEXT,
                     timestamp REAL,
                     evidence_bundle_ref TEXT,
+                    plate_text TEXT,
+                    plate_confidence REAL NOT NULL DEFAULT 0.0,
+                    plate_is_full BOOLEAN NOT NULL DEFAULT 0,
                     FOREIGN KEY (camera_id) REFERENCES Camera (camera_id)
                 )
             ''')
@@ -141,6 +153,8 @@ class DatabaseManager:
                     events_emitted INTEGER,
                     last_frame_ts REAL,
                     last_error TEXT,
+                    reconnect_count INTEGER NOT NULL DEFAULT 0,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
                     simulated BOOLEAN,
                     FOREIGN KEY (camera_id) REFERENCES Camera (camera_id)
                 )
@@ -231,9 +245,12 @@ class DatabaseManager:
             ''')
             self._ensure_columns(cursor, "ViolationEvent", {
                 "reviewed_by": "TEXT", "reviewed_ts": "REAL", "review_note": "TEXT",
-                "verified_by": "TEXT", "verified_ts": "REAL"
+                "verified_by": "TEXT", "verified_ts": "REAL",
+                "plate_text": "TEXT", "plate_confidence": "REAL NOT NULL DEFAULT 0.0",
+                "plate_is_full": "BOOLEAN NOT NULL DEFAULT 0"
             })
             self._ensure_columns(cursor, "EvidenceBundle", {"integrity_hash": "TEXT", "manifest_path": "TEXT"})
+            self._ensure_columns(cursor, "CameraStatus", {"reconnect_count": "INTEGER NOT NULL DEFAULT 0", "consecutive_failures": "INTEGER NOT NULL DEFAULT 0"})
 
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_violation_camera_ts ON ViolationEvent (camera_id, timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_violation_status ON ViolationEvent (status)')
@@ -280,7 +297,7 @@ class DatabaseManager:
         ''')
 
     def save_camera(self, camera_id: str, active: bool = True):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT OR IGNORE INTO Camera (camera_id, active) VALUES (?, ?)",
@@ -290,7 +307,7 @@ class DatabaseManager:
 
     def save_camera_calibration(self, camera_id: str, calibration: dict):
         self.save_camera(camera_id)
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE Camera SET calibration_json = ? WHERE camera_id = ?",
@@ -299,7 +316,7 @@ class DatabaseManager:
             conn.commit()
 
     def get_camera_calibration(self, camera_id: str):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT calibration_json FROM Camera WHERE camera_id = ?", (camera_id,))
             row = cursor.fetchone()
@@ -308,7 +325,7 @@ class DatabaseManager:
             return json.loads(row[0])
 
     def save_track_stub(self, track_id: str, camera_id: str):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT OR IGNORE INTO Track (camera_id, track_id, first_seen_ts, last_seen_ts) VALUES (?, ?, ?, ?)",
@@ -317,37 +334,38 @@ class DatabaseManager:
             conn.commit()
 
     def save_violation_event(self, event: ViolationEvent):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO ViolationEvent (
                     event_id, track_id, camera_id, violation_type, 
                     rule_confidence, aggregated_confidence, status, 
-                    timestamp, evidence_bundle_ref
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    timestamp, evidence_bundle_ref, plate_text, plate_confidence, plate_is_full
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 event.event_id, event.track_id, event.camera_id, event.violation_type,
                 event.rule_confidence, event.aggregated_confidence, event.status,
-                event.timestamp_ms, event.evidence_bundle_ref
+                event.timestamp_ms, event.evidence_bundle_ref, event.plate_text,
+                event.plate_confidence, int(event.plate_is_full)
             ))
             conn.commit()
 
     def save_camera_status(self, health):
         self.save_camera(health.camera_id)
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO CameraStatus (
-                    camera_id, status, frames_processed, events_emitted, last_frame_ts, last_error, simulated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    camera_id, status, frames_processed, events_emitted, last_frame_ts, last_error, reconnect_count, consecutive_failures, simulated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 health.camera_id, health.status, health.frames_processed, health.events_emitted,
-                health.last_frame_ts, health.last_error, health.simulated
+                health.last_frame_ts, health.last_error, health.reconnect_count, health.consecutive_failures, health.simulated
             ))
             conn.commit()
 
     def get_violation_counts_by_camera(self):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT camera_id, violation_type, COUNT(*)
@@ -360,10 +378,10 @@ class DatabaseManager:
             return counts
 
     def get_review_queue(self):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT event_id, track_id, camera_id, violation_type, aggregated_confidence, timestamp, status
+                SELECT event_id, track_id, camera_id, violation_type, aggregated_confidence, timestamp, status, plate_text, plate_confidence, plate_is_full
                 FROM ViolationEvent
                 WHERE status = 'needs_review'
                 ORDER BY timestamp DESC
@@ -377,12 +395,15 @@ class DatabaseManager:
                     "aggregated_confidence": row[4],
                     "timestamp": row[5],
                     "status": row[6],
+                    "plate_text": row[7],
+                    "plate_confidence": row[8],
+                    "plate_is_full": bool(row[9]),
                 }
                 for row in cursor.fetchall()
             ]
 
     def save_blacklist_plate(self, plate_text: str, reason: str, severity: str = "high", min_confidence: float = 0.92):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO BlacklistPlate (plate_text, reason, severity, min_confidence)
@@ -391,7 +412,7 @@ class DatabaseManager:
             conn.commit()
 
     def get_blacklist_entries(self):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT plate_text, reason, severity, min_confidence FROM BlacklistPlate')
             return {
@@ -400,7 +421,7 @@ class DatabaseManager:
             }
 
     def save_alert_route(self, route_key: str, channel: str):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'INSERT OR REPLACE INTO AlertRouting (route_key, channel) VALUES (?, ?)',
@@ -409,13 +430,13 @@ class DatabaseManager:
             conn.commit()
 
     def get_alert_routes(self):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT route_key, channel FROM AlertRouting')
             return {route_key: channel for route_key, channel in cursor.fetchall()}
 
     def save_vehicle_embedding(self, embedding):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO VehicleEmbedding (
@@ -427,8 +448,13 @@ class DatabaseManager:
             ))
             conn.commit()
 
+    def get_recent_embeddings(self, limit: int = 2000):
+        with self._connection() as conn:
+            rows=conn.execute("SELECT embedding_id,camera_id,track_id,timestamp,vector_json FROM VehicleEmbedding ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+        return [{"embedding_id":r[0],"camera_id":r[1],"track_id":r[2],"timestamp_ms":r[3],"vector":json.loads(r[4])} for r in rows]
+
     def save_trajectory_match(self, match):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO TrajectoryStitch (
@@ -445,7 +471,7 @@ class DatabaseManager:
 
     def save_evidence_bundle(self, bundle: EvidenceBundle):
         metadata = json.loads(bundle.metadata_json or "{}")
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute("""
                 INSERT INTO EvidenceBundle (
                     bundle_id, event_id, image_paths, clip_path, metadata_json, integrity_hash, manifest_path
@@ -457,11 +483,28 @@ class DatabaseManager:
             ))
             conn.commit()
 
+    def get_protected_evidence_paths(self):
+        with self._connection() as conn:
+            rows=conn.execute("SELECT image_paths, clip_path FROM EvidenceBundle WHERE event_id IN (SELECT event_id FROM ViolationEvent)").fetchall()
+        paths=[]
+        for image_paths, clip_path in rows:
+            try: paths.extend(json.loads(image_paths or "[]"))
+            except Exception: pass
+            if clip_path: paths.append(clip_path)
+        return paths
+
+    def get_violation_locations(self, limit: int = 1000):
+        with self._connection() as conn:
+            rows=conn.execute("""SELECT v.event_id,v.violation_type,v.timestamp,c.location_lat,c.location_lng
+                FROM ViolationEvent v LEFT JOIN Camera c ON c.camera_id=v.camera_id
+                ORDER BY v.timestamp DESC LIMIT ?""", (limit,)).fetchall()
+        return [{"event_id":r[0],"violation_type":r[1],"timestamp":r[2],"latitude":r[3],"longitude":r[4]} for r in rows]
+
     def get_violation(self, event_id: str):
-        with self._get_connection() as conn:
-            row = conn.execute("SELECT event_id, track_id, camera_id, violation_type, rule_confidence, aggregated_confidence, status, timestamp, evidence_bundle_ref, reviewed_by, reviewed_ts, review_note, verified_by, verified_ts FROM ViolationEvent WHERE event_id = ?", (event_id,)).fetchone()
+        with self._connection() as conn:
+            row = conn.execute("SELECT event_id, track_id, camera_id, violation_type, rule_confidence, aggregated_confidence, status, timestamp, evidence_bundle_ref, plate_text, plate_confidence, plate_is_full, reviewed_by, reviewed_ts, review_note, verified_by, verified_ts FROM ViolationEvent WHERE event_id = ?", (event_id,)).fetchone()
             if not row: return None
-            keys = ["event_id","track_id","camera_id","violation_type","rule_confidence","aggregated_confidence","status","timestamp","evidence_bundle_ref","reviewed_by","reviewed_ts","review_note","verified_by","verified_ts"]
+            keys = ["event_id","track_id","camera_id","violation_type","rule_confidence","aggregated_confidence","status","timestamp","evidence_bundle_ref","plate_text","plate_confidence","plate_is_full","reviewed_by","reviewed_ts","review_note","verified_by","verified_ts"]
             return dict(zip(keys,row))
 
     def review_event(self, event_id: str, new_status: str, reviewer: str, note: str = ""):
@@ -471,36 +514,36 @@ class DatabaseManager:
         if not validate_transition(current["status"], new_status):
             raise ValueError(f"Invalid review transition: {current['status']} -> {new_status}")
         now=time.time()*1000.0
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute("UPDATE ViolationEvent SET status=?, reviewed_by=?, reviewed_ts=?, review_note=?, verified_by=?, verified_ts=? WHERE event_id=?", (new_status, reviewer, now, note, reviewer if new_status=="verified" else None, now if new_status=="verified" else None, event_id))
-            conn.execute("INSERT INTO ReviewDecision VALUES (?,?,?,?,?,?,?)", (f"rev_{uuid.uuid4().hex[:12]}",event_id,reviewer,current["status"],new_status,note,now))
+            conn.execute("INSERT INTO ReviewDecision (decision_id,event_id,reviewer,old_status,new_status,note,created_ts) VALUES (?,?,?,?,?,?,?)", (f"rev_{uuid.uuid4().hex[:12]}",event_id,reviewer,current["status"],new_status,note,now))
             conn.commit()
         return self.get_violation(event_id)
 
     def save_audit(self, subject: str, action: str, resource_type: str = "", resource_id: str = "", metadata: dict | None = None):
-        with self._get_connection() as conn:
-            conn.execute("INSERT INTO AuditLog VALUES (?,?,?,?,?,?,?)", (f"aud_{uuid.uuid4().hex[:12]}",subject,action,resource_type,resource_id,json.dumps(metadata or {}),time.time()*1000.0))
+        with self._connection() as conn:
+            conn.execute("INSERT INTO AuditLog (audit_id,subject,action,resource_type,resource_id,metadata_json,created_ts) VALUES (?,?,?,?,?,?,?)", (f"aud_{uuid.uuid4().hex[:12]}",subject,action,resource_type,resource_id,json.dumps(metadata or {}),time.time()*1000.0))
             conn.commit()
 
     def save_notification_log(self, event_id: str, channel: str, destination: str, status: str, error: str = ""):
-        with self._get_connection() as conn:
-            conn.execute("INSERT INTO NotificationLog VALUES (?,?,?,?,?,?,?)", (f"not_{uuid.uuid4().hex[:12]}",event_id,channel,destination,status,error,time.time()*1000.0))
+        with self._connection() as conn:
+            conn.execute("INSERT INTO NotificationLog (notification_id,event_id,channel,destination,status,error,created_ts) VALUES (?,?,?,?,?,?,?)", (f"not_{uuid.uuid4().hex[:12]}",event_id,channel,destination,status,error,time.time()*1000.0))
             conn.commit()
 
     def save_plate_observation(self, plate_text: str | None, camera_id: str, track_id: str | None, timestamp_ms: float, confidence: float, latitude: float | None = None, longitude: float | None = None, source: str = "camera"):
-        with self._get_connection() as conn:
-            conn.execute("INSERT INTO VehicleObservation VALUES (?,?,?,?,?,?,?,?,?)", (f"obs_{uuid.uuid4().hex[:12]}",plate_text,camera_id,track_id,timestamp_ms,latitude,longitude,confidence,source))
+        with self._connection() as conn:
+            conn.execute("INSERT INTO VehicleObservation (observation_id,plate_text,camera_id,track_id,timestamp_ms,latitude,longitude,confidence,source) VALUES (?,?,?,?,?,?,?,?,?)", (f"obs_{uuid.uuid4().hex[:12]}",plate_text,camera_id,track_id,timestamp_ms,latitude,longitude,confidence,source))
             conn.commit()
 
     def get_vehicle_timeline(self, plate_text: str, limit: int = 200):
         clean = ''.join(c for c in plate_text.upper() if c.isalnum())
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             rows=conn.execute("SELECT observation_id,plate_text,camera_id,track_id,timestamp_ms,latitude,longitude,confidence,source FROM VehicleObservation WHERE REPLACE(REPLACE(UPPER(plate_text),' ',''),'-','')=? ORDER BY timestamp_ms ASC LIMIT ?", (clean,limit)).fetchall()
         keys=["observation_id","plate_text","camera_id","track_id","timestamp_ms","latitude","longitude","confidence","source"]
         return [dict(zip(keys,r)) for r in rows]
 
     def get_review_history(self, event_id: str):
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             rows=conn.execute("SELECT decision_id,event_id,reviewer,old_status,new_status,note,created_ts FROM ReviewDecision WHERE event_id=? ORDER BY created_ts ASC",(event_id,)).fetchall()
         keys=["decision_id","event_id","reviewer","old_status","new_status","note","created_ts"]
         return [dict(zip(keys,r)) for r in rows]

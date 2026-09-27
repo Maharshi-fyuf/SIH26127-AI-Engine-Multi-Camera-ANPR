@@ -1,3 +1,4 @@
+from tests.fixtures import fake_seatbelt
 import os
 import sqlite3
 import tempfile
@@ -103,7 +104,7 @@ class TestV4ToV8Plan(unittest.TestCase):
         self.assertEqual(rider_fact.rider_count, 3)
 
         frame = FrameEvent("cam_A", 1, 1000.0, np.zeros((240, 320, 3), dtype=np.uint8))
-        seatbelt_fact = SeatbeltDetector().placeholder_state(frame, vehicle_box, synthetic_fastened=False)
+        seatbelt_fact = fake_seatbelt(vehicle_box, fastened=False)
         self.assertFalse(seatbelt_fact.seatbelt_fastened)
 
         engine = RuleEngine("rule_engine/rules.json", confidence_threshold=0.75)
@@ -232,7 +233,7 @@ class TestV4ToV8Plan(unittest.TestCase):
 
         report = render_accuracy_audit_report([RuleMetrics("RED_LIGHT_VIOLATION", 9, 1, 2, 1)])
         self.assertIn("Digital Personal Data Protection Act, 2023", report)
-        self.assertIn("| RED_LIGHT_VIOLATION | 0.90 | 0.82 | 0.10 | 1 |", report)
+        self.assertIn("| RED_LIGHT_VIOLATION | 0.90 | 0.82 | N/A | 0.10 | 1 |", report)
 
 
 if __name__ == "__main__":

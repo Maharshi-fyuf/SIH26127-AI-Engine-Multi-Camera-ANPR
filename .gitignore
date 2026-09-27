@@ -10,3 +10,7 @@ models/*.pt
 models/*.onnx
 evidence_output/*
 !evidence_output/.gitkeep
+
+desktop.ini
+tracker_code.txt
+*.log

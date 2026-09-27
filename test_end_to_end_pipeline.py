@@ -1,3 +1,4 @@
+from tests.fixtures import fake_helmet
 import cv2
 import numpy as np
 import time
@@ -47,7 +48,7 @@ def run_pipeline():
         vehicle_box_a = BoundingBox(x1=300, y1=vehicle_y2_a - 50, x2=400, y2=vehicle_y2_a)
         has_crossed_a = stop_line_detector.has_crossed(vehicle_box_a)
         
-        helmet_facts_a = list(helmet_detector._placeholder_helmet_state(event, vehicle_box_a, synthetic_has_helmet=False, synthetic_confidence=0.85))
+        helmet_facts_a = list(fake_helmet(event, vehicle_box_a, has_helmet=False, confidence=0.85))
         
         agg_facts_a, agg_conf_a = aggregator.update_track(
             track_id="track_99",
@@ -68,7 +69,7 @@ def run_pipeline():
         vehicle_box_b = BoundingBox(x1=100, y1=vehicle_y2_b - 50, x2=200, y2=vehicle_y2_b)
         has_crossed_b = stop_line_detector.has_crossed(vehicle_box_b)
         
-        helmet_facts_b = list(helmet_detector._placeholder_helmet_state(event, vehicle_box_b, synthetic_has_helmet=True, synthetic_confidence=0.95))
+        helmet_facts_b = list(fake_helmet(event, vehicle_box_b, has_helmet=True, confidence=0.95))
         
         agg_facts_b, agg_conf_b = aggregator.update_track(
             track_id="track_88",
@@ -88,7 +89,7 @@ def run_pipeline():
         # Stays entirely outside polygon, but jitters into it for exactly Frame 4
         has_crossed_c = True if frame_idx == 4 else False
         
-        helmet_facts_c = list(helmet_detector._placeholder_helmet_state(event, vehicle_box_b, synthetic_has_helmet=True, synthetic_confidence=0.95))
+        helmet_facts_c = list(fake_helmet(event, vehicle_box_b, has_helmet=True, confidence=0.95))
         
         agg_facts_c, agg_conf_c = aggregator.update_track(
             track_id="track_77",

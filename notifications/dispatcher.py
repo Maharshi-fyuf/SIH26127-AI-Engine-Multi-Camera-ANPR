@@ -12,10 +12,10 @@ class DispatchResult:
     error: str = ""
 
 class NotificationDispatcher:
-    def __init__(self, enabled: bool = False):
+    def __init__(self, enabled: bool = False, *, wawp=None, smtp=None):
         self.enabled = enabled
-        self.wawp = WawpNotifier()
-        self.gmail = GmailSmtpNotifier()
+        self.wawp = WawpNotifier(*(wawp or ())) if wawp is not None else WawpNotifier()
+        self.gmail = GmailSmtpNotifier(*(smtp or ())) if smtp is not None else GmailSmtpNotifier()
 
     @staticmethod
     def _verified(status: str, human_verified: bool) -> bool:

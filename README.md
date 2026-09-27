@@ -1,25 +1,27 @@
 # AI-Based Intelligent Traffic Monitoring & Enforcement System (SIH26127)
 
-**SIH26127, Team Yuvetech**
+**SIH26127, Team YUVATECH**
 
-This repository contains the source code for an AI-powered traffic monitoring and enforcement system. It ingests video feeds, tracks vehicles in real-time, aggregates multi-frame events to reduce false positives, and uses a rule engine to confirm violations (e.g., stop-line crossing, missing helmets) before generating evidence packages and simulated alerts.
+This repository contains the source code for an AI-powered traffic monitoring and enforcement system. It ingests video feeds, tracks vehicles in real-time, aggregates multi-frame events to reduce false positives, and uses a deterministic rule engine to create machine-detected violation events that remain in human review until explicitly verified before any citizen-facing notification.
 
 ## Architecture Summary
 The system relies on a strict decoupling between **perception** and **judgement**. The perception modules (YOLOv8, Norfair/ByteTrack, OCR) only emit objective `DetectionFact`s (e.g., "object ID 5 is a motorcycle at [x,y]"). An intermediate Event Aggregation layer tracks these facts across consecutive frames to filter out single-frame noise. Finally, a deterministic Rule Engine consumes these smoothed facts to declare a `ViolationEvent`. This prevents a single hallucinated frame from triggering a false alert and ensures the rule logic can be audited independently of the AI models.
 
 ## Current Build Status
 
-This build is a hardened prototype with production-oriented interfaces. Core perception, tracking, aggregation, deterministic rule evaluation, evidence generation, multi-camera orchestration, trajectory/GIS primitives, watchlist intelligence, human-review state management, governance, notifications and a live FastAPI server are implemented.
+This build is a hardened prototype with production-oriented interfaces. Core perception, tracking, aggregation, deterministic rule evaluation, evidence generation, multi-camera orchestration, vehicle-scoped ANPR/attributes, trajectory/GIS primitives, watchlist intelligence, human-review state management, governance, notifications and the FastAPI control layer are implemented.
 
-Important implementation boundary: specialist ANPR/helmet/seatbelt models require validated model weights. The repository now exposes real YOLO-backed adapters and fails closed when those weights are absent; synthetic placeholder helpers remain only for deterministic automated tests. eChallan remains an integration boundary/specification until an authorized government API contract and credentials exist.
+Important implementation boundary: specialist ANPR/helmet/seatbelt models require validated model weights. The repository exposes real YOLO-backed adapters and fails closed when those weights are absent. Synthetic detector helpers live only under tests/fixtures.py and are not part of production detector classes. eChallan remains an integration boundary/specification until an authorized government API contract and credentials exist.
 
 ### Notification stack
 - Wawp WhatsApp adapter using the supplied `wawp_sdk` contract; credentials are environment-only.
 - Gmail SMTP/STARTTLS adapter.
 - Notifications are disabled by default and citizen-facing notifications require an explicit `verified` human/authority review state.
 
-### Live server
-`python run_server.py` starts the FastAPI control/API layer. See `DEPLOYMENT.md` for production deployment, HTTPS, secrets, model weights and database guidance.
+### Live server and end-to-end pipeline
+`python run_server.py` starts the FastAPI control layer. The dedicated `python run_worker.py` process owns the actual live camera processing workers; this separation is used by Docker Compose. For a single-process local demo, set `YUVATECH_AUTO_START_PIPELINE=true`. Each camera flows through YOLO perception, tracking, vehicle-scoped ANPR/attributes, temporal aggregation, deterministic rule evaluation, evidence generation and SQLite persistence. The API exposes `/api/pipeline/status`, `/api/pipeline/start` and `/api/pipeline/stop`.
+
+Configure cameras with `YUVATECH_CAMERAS=cam_01=0;cam_02=rtsp://...`. Docker Compose deliberately separates the API and perception worker so the camera workload cannot be accidentally duplicated by multiple API workers. See `DEPLOYMENT.md` for production deployment, HTTPS, secrets, model weights and database guidance.
 
 ### Audit
 See `docs/FINAL_IMPLEMENTATION_AUDIT.md` for implemented capabilities and remaining deployment-specific requirements.
@@ -39,8 +41,16 @@ See `docs/FINAL_IMPLEMENTATION_AUDIT.md` for implemented capabilities and remain
    ```bash
    pip install -r requirements.txt
    ```
-4. **Running the Pipeline:**
-   Check the provided testing and diagnostic scripts (e.g., `test_phase4_pipeline.py`, `debug_visualize.py`).
+4. **Configure cameras:**
+   Copy `.env.example` to `.env` and set `YUVATECH_CAMERAS`, for example:
+   ```text
+   YUVATECH_CAMERAS=cam_01=0;cam_02=rtsp://user:password@host:554/stream
+   ```
+5. **Running the live pipeline:**
+   ```bash
+   python run_server.py
+   ```
+   For a live camera worker in the recommended deployment, run `python run_worker.py` in a second process. For a single-process demo, set `YUVATECH_AUTO_START_PIPELINE=true` before starting the server. See `DEPLOYMENT.md` for lifecycle endpoints and deployment details.
 
 ## Documentation
 - [Product Requirements Document (PRD)](docs/PRD-traffic-enforcement-system.md)

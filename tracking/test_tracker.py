@@ -9,6 +9,7 @@ class TestObjectTracker(unittest.TestCase):
     def test_tracker_assigns_consistent_ids(self):
         # We'll set initialization delay to 0 so it tracks immediately on frame 1 for this test
         config = TrackingConfig(
+            distance_function="euclidean",
             max_distance_threshold=30.0,
             initialization_delay=0,
             hit_counter_max=5
@@ -66,7 +67,7 @@ class TestObjectTracker(unittest.TestCase):
         self.assertNotEqual(track_id_1, track_id_3)
         
     def test_tracker_initialization_delay(self):
-        config = TrackingConfig(max_distance_threshold=30.0, initialization_delay=2)
+        config = TrackingConfig(distance_function="euclidean", max_distance_threshold=30.0, initialization_delay=2)
         tracker = ObjectTracker(config)
         
         def mock_stream():
@@ -95,7 +96,7 @@ class TestObjectTracker(unittest.TestCase):
         self.assertIsNotNone(events[2].tracked_detections[0].track_id)
         
     def test_tracker_stationary_vehicle_is_not_ghosted(self):
-        config = TrackingConfig(max_distance_threshold=30.0, initialization_delay=0)
+        config = TrackingConfig(distance_function="euclidean", max_distance_threshold=30.0, initialization_delay=0)
         tracker = ObjectTracker(config)
         
         def mock_stream():

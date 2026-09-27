@@ -44,7 +44,3 @@ class PlateDetector:
                 c=float(box.conf[0]); x1,y1,x2,y2=map(float,box.xyxy[0].tolist())
                 yield PlateDetectionFact(BoundingBox(x1,y1,x2,y2),c,False)
 
-    def _placeholder_plate_region(self, frame_event, manual_bbox, synthetic_confidence=0.75):
-        """TEST-ONLY compatibility helper. Never call from production inference."""
-        from plate.models import PlateDetectionFact
-        yield PlateDetectionFact(manual_bbox, synthetic_confidence, True)

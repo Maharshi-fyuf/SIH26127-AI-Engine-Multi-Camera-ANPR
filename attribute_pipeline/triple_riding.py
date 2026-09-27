@@ -19,7 +19,10 @@ def count_riders_on_vehicle(vehicle_box: BoundingBox, person_detections: Iterabl
         center_x = (detection.bbox.x1 + detection.bbox.x2) / 2.0
         feet_y = detection.bbox.y2
         inside_x = vehicle_box.x1 <= center_x <= vehicle_box.x2
-        near_vehicle = vehicle_box.y1 - 80 <= feet_y <= vehicle_box.y2 + 40
+        vehicle_height = max(1.0, vehicle_box.y2 - vehicle_box.y1)
+        margin_top = 0.25 * vehicle_height
+        margin_bottom = 0.15 * vehicle_height
+        near_vehicle = vehicle_box.y1 - margin_top <= feet_y <= vehicle_box.y2 + margin_bottom
         if inside_x and near_vehicle:
             riders.append(detection)
 

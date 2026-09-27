@@ -21,7 +21,12 @@ class SimulatedAlertGenerator:
         print(f" Confidence       : {(event.aggregated_confidence * 100):.1f}%")
         print("-" * 60)
         print(" [ VEHICLE INFORMATION ]")
-        print(" Plate Number     : NOT READABLE - FALLBACK TRIGGERED")
+        plate = event.plate_text or metadata.get("plate_text")
+        if plate:
+            plate_label = f"{plate} ({event.plate_confidence * 100:.1f}% OCR)"
+        else:
+            plate_label = "NOT READABLE - NO RELIABLE SCOPED READ"
+        print(f" Plate Number     : {plate_label}")
         print(f" Vehicle Class    : {vehicle_class.upper()}")
         print("-" * 60)
         print(" [ EVIDENCE ARTIFACTS ]")

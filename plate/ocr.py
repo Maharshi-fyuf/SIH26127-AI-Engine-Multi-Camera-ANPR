@@ -60,9 +60,13 @@ class PlateOcr:
 
 class TemporalPlateReader:
     """Multi-frame voting; only emits a full identity when consistency is sufficient."""
-    def __init__(self,min_votes:int=3,min_confidence:float=.55): self.min_votes=min_votes; self.min_confidence=min_confidence; self._reads=[]
+    def __init__(self,min_votes:int=3,min_confidence:float=.55,max_reads:int=30):
+        self.min_votes=min_votes; self.min_confidence=min_confidence; self.max_reads=max(3,max_reads); self._reads=[]
     def add(self,fact:Optional[OcrFact]):
-        if fact and fact.text and fact.confidence>=self.min_confidence: self._reads.append(fact)
+        if fact and fact.text and fact.confidence>=self.min_confidence:
+            self._reads.append(fact)
+            if len(self._reads) > self.max_reads:
+                self._reads = self._reads[-self.max_reads:]
         if len(self._reads)<self.min_votes: return None
         groups={}
         for f in self._reads:

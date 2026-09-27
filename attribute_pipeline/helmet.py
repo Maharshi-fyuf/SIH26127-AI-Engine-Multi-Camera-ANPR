@@ -31,19 +31,25 @@ class HelmetDetector:
 
     def detect(self, frame_event: FrameEvent, vehicle_box: BoundingBox) -> Iterator[HelmetFact]:
         if self.model is None: return
-        results=self.model(frame_event.image, conf=self.confidence, verbose=False)
+        # Scope inference to the target vehicle. Running on the whole frame can
+        # incorrectly assign another rider's helmet state to this track.
+        image=frame_event.image
+        h,w=image.shape[:2]
+        vx1=max(0,min(w-1,int(vehicle_box.x1))); vy1=max(0,min(h-1,int(vehicle_box.y1)))
+        vx2=max(vx1+1,min(w,int(vehicle_box.x2))); vy2=max(vy1+1,min(h,int(vehicle_box.y2)))
+        crop=image[vy1:vy2,vx1:vx2]
+        if crop.size==0: return
+        results=self.model(crop, conf=self.confidence, verbose=False)
         best=None
         for result in results:
             if result.boxes is None: continue
             names=result.names
             for box in result.boxes:
-                name=str(names.get(int(box.cls[0]), '')).lower(); c=float(box.conf[0])
+                name=str(names.get(int(box.cls[0]), '')).lower().strip().replace(' ','_')
+                c=float(box.conf[0])
                 if name not in self.positive_names and name not in {'no_helmet','without_helmet'}: continue
-                x1,y1,x2,y2=map(float,box.xyxy[0].tolist())
-                candidate=HelmetFact(BoundingBox(x1,y1,x2,y2), name in self.positive_names, c, False)
+                rx1,ry1,rx2,ry2=map(float,box.xyxy[0].tolist())
+                candidate=HelmetFact(BoundingBox(rx1+vx1,ry1+vy1,rx2+vx1,ry2+vy1), name in self.positive_names, c, False)
                 if best is None or c>best.confidence: best=candidate
         if best is not None: yield best
 
-    def _placeholder_helmet_state(self, frame_event, manual_bbox, synthetic_has_helmet=False, synthetic_confidence=0.75):
-        """TEST-ONLY compatibility helper for deterministic pipeline tests."""
-        yield HelmetFact(manual_bbox, synthetic_has_helmet, synthetic_confidence, True)

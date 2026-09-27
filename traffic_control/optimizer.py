@@ -76,10 +76,14 @@ class SignalOptimizer:
 
         emergency = next((s for s in states if s.emergency_vehicle and s.emergency_confidence >= self.emergency_confidence_threshold), None)
         if emergency:
-            # Give the emergency approach the largest safe phase while keeping
-            # a minimum service window for every other approach.
-            remaining = self.cycle_seconds - self.min_green * (len(states) - 1)
-            priority_green = min(self.max_green, max(self.min_green, remaining))
+            # With a single approach there is no competing phase, so the full cycle
+            # belongs to that approach. With multiple approaches, preserve minimum
+            # service windows and cap emergency priority at max_green.
+            if len(states) == 1:
+                priority_green = self.cycle_seconds
+            else:
+                remaining = self.cycle_seconds - self.min_green * (len(states) - 1)
+                priority_green = min(self.max_green, max(self.min_green, remaining))
             other = self.cycle_seconds - priority_green
             non_emergency = [s for s in states if s.approach_id != emergency.approach_id]
             phases = [PhaseRecommendation(emergency.approach_id, priority_green,

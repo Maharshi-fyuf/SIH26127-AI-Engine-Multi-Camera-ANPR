@@ -61,6 +61,3 @@ class SeatbeltDetector:
                 yield SeatbeltFact(vehicle_box,False,conf,False); return
         return
 
-    def placeholder_state(self, frame, vehicle_box, synthetic_fastened=True, synthetic_confidence=0.8):
-        """TEST-ONLY compatibility helper."""
-        return SeatbeltFact(vehicle_box, synthetic_fastened, synthetic_confidence, True)

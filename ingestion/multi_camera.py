@@ -66,6 +66,7 @@ class CameraWorker:
 
     def run(self):
         retry_count=0
+        total_reconnects=0
         self.health.status="connecting"
         while not self._stop_event.is_set():
             try:
@@ -84,10 +85,16 @@ class CameraWorker:
                 if self._stop_event.is_set():
                     self.health.status="stopped"; break
                 # A live stream ending is treated as a disconnect; recorded files are completed normally.
+                # A successful frame burst resets the consecutive-failure backoff so intermittent
+                # outages do not accumulate toward the retry ceiling over the camera lifetime.
+                if saw_frame:
+                    retry_count = 0
+                    self.health.consecutive_failures = 0
                 if not self._is_live_source(self.config.source_url) or not self.reconnect_enabled:
                     self.health.status="completed"; break
                 retry_count += 1
-                self.health.reconnect_count=retry_count
+                total_reconnects += 1
+                self.health.reconnect_count=total_reconnects
                 self.health.consecutive_failures=retry_count
                 self.health.status="reconnecting"
                 if self.max_retries and retry_count > self.max_retries:
@@ -99,7 +106,8 @@ class CameraWorker:
                 self._stop_event.wait(delay)
             except Exception as exc:
                 retry_count += 1
-                self.health.reconnect_count=retry_count
+                total_reconnects += 1
+                self.health.reconnect_count=total_reconnects
                 self.health.consecutive_failures=retry_count
                 self.health.last_error=str(exc)
                 logger.exception("Camera worker failure for %s",self.config.camera_id)

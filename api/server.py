@@ -2,7 +2,7 @@
 Run: uvicorn api.server:app --host 0.0.0.0 --port 8000
 """
 from __future__ import annotations
-import os, json
+import os, json, time
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -12,17 +12,79 @@ from db.manager import DatabaseManager
 from notifications.dispatcher import NotificationDispatcher
 from security.auth import ApiKeyAuthorizer, Principal
 from traffic_control.optimizer import ApproachState, SignalOptimizer
+from api.dashboard import ControlRoomDashboard
+from analytics.spatial import violation_heatmap
+from tracking.reid import CameraLink, TrajectoryStitcher
+from governance.retention import RetentionManager
+from monitoring.anomaly import score_camera
+from ingestion.stream import CameraConfig
 
 app=FastAPI(title="YUVATECH Traffic Intelligence API", version="2.0.0", docs_url="/docs")
 db=DatabaseManager(settings.db_path)
-auth=ApiKeyAuthorizer({
-    settings.api_key:"operator",
-    settings.admin_api_key:"admin",
-    settings.reviewer_api_key:"reviewer",
-    settings.investigator_api_key:"investigator",
-    settings.auditor_api_key:"auditor",
-})
-notifier=NotificationDispatcher(settings.notification_enabled)
+def _build_auth(cfg=settings):
+    pairs = [
+        (cfg.api_key, "operator", "operator-key"),
+        (cfg.admin_api_key, "admin", "admin-key"),
+        (cfg.reviewer_api_key, "reviewer", "reviewer-key"),
+        (cfg.investigator_api_key, "investigator", "investigator-key"),
+        (cfg.auditor_api_key, "auditor", "auditor-key"),
+    ]
+    seen = {}
+    mapping = {}
+    for key, role, subject in pairs:
+        if not key:
+            continue
+        if key in seen:
+            raise RuntimeError(f"Duplicate API key configured for roles {seen[key]} and {role}")
+        seen[key] = role
+        mapping[key] = (subject, role)
+    return ApiKeyAuthorizer(mapping)
+
+auth=_build_auth()
+notifier=NotificationDispatcher(
+    settings.notification_enabled,
+    wawp=(settings.wawp_instance_id, settings.wawp_access_token, settings.wawp_session, settings.wawp_send_url),
+    smtp=(settings.smtp_host, settings.smtp_port, settings.smtp_user, settings.smtp_password, settings.notification_from),
+)
+pipeline_service = None
+pipeline_start_error = None
+
+def parse_camera_sources(raw: str):
+    """Parse cam_id=source;cam_id=source deployment configuration."""
+    configs = []
+    for item in (raw or "").split(";"):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        camera_id, source = item.split("=", 1)
+        camera_id, source = camera_id.strip(), source.strip()
+        if camera_id and source:
+            configs.append(CameraConfig(camera_id, source))
+    return configs
+
+@app.on_event("startup")
+def start_live_pipeline():
+    global pipeline_service, pipeline_start_error
+    if not settings.auto_start_pipeline or not settings.camera_sources.strip():
+        return
+    try:
+        from pipeline.live import LivePipelineService
+        configs = parse_camera_sources(settings.camera_sources)
+        if not configs:
+            return
+        pipeline_service = LivePipelineService(db, configs)
+        pipeline_service.start()
+    except Exception as exc:
+        pipeline_start_error = str(exc)
+        import logging
+        logging.getLogger(__name__).exception("Live pipeline failed to start")
+
+@app.on_event("shutdown")
+def stop_live_pipeline():
+    global pipeline_service
+    if pipeline_service is not None:
+        pipeline_service.stop()
+        pipeline_service = None
 
 class ReviewRequest(BaseModel):
     status: str = Field(pattern="^(approved|rejected|escalated|verified)$")
@@ -60,7 +122,58 @@ def require_role(key: str|None,*roles):
     return p
 
 @app.get("/health")
-def health(): return {"status":"ok","environment":settings.environment,"notifications_enabled":settings.notification_enabled}
+def health():
+    anomalies={}
+    if pipeline_service is not None:
+        for camera_id, health_item in pipeline_service.runner.health_snapshot().items():
+            age = max(0.0, time.time()*1000.0-health_item.last_frame_ts) if health_item.last_frame_ts else float("inf")
+            anomalies[camera_id] = score_camera(camera_id, frames_processed=health_item.frames_processed, events_emitted=health_item.events_emitted, last_frame_age_ms=age, error=health_item.last_error).__dict__
+    return {
+        "status":"ok", "environment":settings.environment,
+        "notifications_enabled":settings.notification_enabled,
+        "pipeline_configured":bool(settings.camera_sources.strip()),
+        "pipeline_running":pipeline_service is not None,
+        "pipeline_start_error":pipeline_start_error,
+        "camera_anomalies":anomalies,
+    }
+
+@app.get("/api/pipeline/status")
+def pipeline_status(x_api_key: str|None=Header(default=None)):
+    require_role(x_api_key,"operator","admin","auditor")
+    if pipeline_service is None:
+        return {"running":False,"configured":bool(settings.camera_sources.strip()),"error":pipeline_start_error,"cameras":{}}
+    return {"running":True,"configured":True,"error":None,"cameras":pipeline_service.status()}
+
+@app.post("/api/pipeline/start")
+def pipeline_start(x_api_key: str|None=Header(default=None)):
+    global pipeline_service, pipeline_start_error
+    p=require_role(x_api_key,"admin")
+    if pipeline_service is not None:
+        return {"running":True,"cameras":pipeline_service.status()}
+    configs=parse_camera_sources(settings.camera_sources)
+    if not configs:
+        raise HTTPException(400,"Set YUVATECH_CAMERAS as cam_id=source;cam_id=source before starting the live pipeline")
+    try:
+        from pipeline.live import LivePipelineService
+        pipeline_service=LivePipelineService(db, configs)
+        pipeline_start_error=None
+        result=pipeline_service.start()
+        db.save_audit(p.subject,"start_live_pipeline","Pipeline","live",{"cameras":[c.camera_id for c in configs]})
+        return {"running":True,"cameras":result}
+    except Exception as exc:
+        pipeline_start_error=str(exc)
+        raise HTTPException(500,f"Live pipeline failed to start: {exc}")
+
+@app.post("/api/pipeline/stop")
+def pipeline_stop(x_api_key: str|None=Header(default=None)):
+    global pipeline_service
+    p=require_role(x_api_key,"admin")
+    if pipeline_service is None:
+        return {"running":False,"cameras":{}}
+    result=pipeline_service.stop()
+    pipeline_service=None
+    db.save_audit(p.subject,"stop_live_pipeline","Pipeline","live")
+    return {"running":False,"cameras":result}
 
 @app.post("/api/signals/optimize")
 def optimize_signal(request: SignalOptimizationRequest, x_api_key: str|None=Header(default=None)):
@@ -93,10 +206,10 @@ def review_queue(x_api_key: str|None=Header(default=None)):
 
 @app.get("/api/violations/{event_id}")
 def violation(event_id:str,x_api_key:str|None=Header(default=None)):
-    require_role(x_api_key,"operator","admin","reviewer","investigator","auditor")
+    p=require_role(x_api_key,"operator","admin","reviewer","investigator","auditor")
     row=db.get_violation(event_id)
     if not row: raise HTTPException(404,"Event not found")
-    db.save_audit("api-user","vehicle_violation_view","ViolationEvent",event_id)
+    db.save_audit(p.subject,"vehicle_violation_view","ViolationEvent",event_id)
     return {"event":row,"review_history":db.get_review_history(event_id)}
 
 @app.post("/api/violations/{event_id}/review")
@@ -134,4 +247,41 @@ def evidence(filename:str,x_api_key:str|None=Header(default=None)):
 
 @app.get("/",response_class=HTMLResponse)
 def home():
-    return HTMLResponse('''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>YUVATECH Control Room</title><style>body{font-family:Inter,system-ui;margin:0;background:#08111f;color:#eaf2ff}main{max-width:1200px;margin:auto;padding:32px}.hero{padding:28px;border:1px solid #24354f;border-radius:20px;background:#0e1a2c}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:18px}.card{padding:20px;border:1px solid #24354f;border-radius:16px;background:#0b1728}.muted{color:#93a7c2}code{color:#9bd0ff}</style></head><body><main><section class="hero"><h1>YUVATECH Control Room</h1><p class="muted">Multi-camera ANPR · trajectory intelligence · explainable enforcement</p></section><div class="grid"><div class="card"><b>API</b><p><code>/docs</code></p></div><div class="card"><b>Review</b><p>Authenticated human verification workflow</p></div><div class="card"><b>Timeline</b><p>Observed vehicle journey by plate</p></div><div class="card"><b>Notifications</b><p>Wawp + Gmail after verification</p></div><div class="card"><b>Adaptive Signals</b><p>Demand-weighted signal timing recommendations</p><p><code>POST /api/signals/optimize</code></p></div></div></main></body></html>''')
+    dashboard = ControlRoomDashboard(db)
+    health = pipeline_service.runner.health_snapshot() if pipeline_service is not None else {}
+    return HTMLResponse(dashboard.render_html(health))
+
+@app.get("/api/analytics/heatmap")
+def analytics_heatmap(x_api_key:str|None=Header(default=None)):
+    require_role(x_api_key,"operator","admin","investigator","auditor")
+    return {"heatmap": {f"{lat:.4f},{lng:.4f}": count for (lat,lng), count in violation_heatmap(db.get_violation_locations()).items()}}
+
+@app.post("/api/governance/retention/run")
+def run_retention(x_api_key:str|None=Header(default=None)):
+    p=require_role(x_api_key,"admin")
+    root=Path(settings.evidence_dir)
+    paths=[str(path) for path in root.glob("*") if path.is_file()] if root.exists() else []
+    protected=db.get_protected_evidence_paths()
+    decisions=RetentionManager().purge_non_violation_files(paths, protected)
+    db.save_audit(p.subject,"run_retention","EvidenceDirectory",str(root),{"decisions":len(decisions)})
+    return {"decisions":[d.__dict__ for d in decisions]}
+
+class TrajectoryLinkRequest(BaseModel):
+    from_camera_id: str
+    to_camera_id: str
+    min_travel_ms: float = Field(default=1000, ge=0)
+    max_travel_ms: float = Field(default=300000, gt=0)
+
+@app.post("/api/trajectories/stitch")
+def stitch_trajectories(links:list[TrajectoryLinkRequest], x_api_key:str|None=Header(default=None)):
+    p=require_role(x_api_key,"investigator","admin")
+    camera_links=[CameraLink(**link.model_dump()) for link in links]
+    stitcher=TrajectoryStitcher(camera_links)
+    raw=db.get_recent_embeddings()
+    from tracking.reid import VehicleEmbedding
+    embeddings=[VehicleEmbedding(r["embedding_id"],r["camera_id"],r["track_id"],r["timestamp_ms"],r["vector"]) for r in raw]
+    matches=stitcher.match(embeddings)
+    for match in matches:
+        db.save_trajectory_match(match)
+    db.save_audit(p.subject,"trajectory_stitch","VehicleEmbedding","batch",{"matches":len(matches)})
+    return {"matches":[{"from_embedding_id":m.from_embedding.embedding_id,"to_embedding_id":m.to_embedding.embedding_id,"similarity":m.similarity} for m in matches]}

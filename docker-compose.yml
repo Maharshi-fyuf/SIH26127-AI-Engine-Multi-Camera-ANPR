@@ -2,10 +2,29 @@ services:
   yuvatech-api:
     build: .
     env_file: .env
+    environment:
+      YUVATECH_AUTO_START_PIPELINE: "false"
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./evidence_output:/app/evidence_output
-      - ./models:/app/models:ro
+      - yuvatech_models:/app/models
     restart: unless-stopped
+
+  yuvatech-worker:
+    build: .
+    env_file: .env
+    environment:
+      YUVATECH_AUTO_START_PIPELINE: "false"
+    command: ["python", "run_worker.py"]
+    volumes:
+      - ./data:/app/data
+      - ./evidence_output:/app/evidence_output
+      - yuvatech_models:/app/models
+    restart: unless-stopped
+    depends_on:
+      - yuvatech-api
+
+volumes:
+  yuvatech_models:

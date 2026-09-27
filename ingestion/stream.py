@@ -33,6 +33,8 @@ class VideoStream:
         self.cap = cv2.VideoCapture(src)
         
         if not self.cap.isOpened():
+            self.cap.release()
+            self.cap = None
             raise ValueError(f"Failed to open video source: {self.config.source_url}")
             
         self.source_fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -80,5 +82,6 @@ class VideoStream:
             
     def close(self):
         """Release the capture device."""
-        if self.cap.isOpened():
+        if self.cap is not None and self.cap.isOpened():
             self.cap.release()
+        self.cap = None

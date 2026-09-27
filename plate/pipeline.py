@@ -1,6 +1,7 @@
 """End-to-end plate localization -> preprocessing -> OCR -> temporal voting."""
 from __future__ import annotations
 from collections import defaultdict
+import time
 import cv2
 from ingestion.stream import FrameEvent
 from detection.detector import BoundingBox
@@ -12,6 +13,8 @@ class PlatePipeline:
         self.detector=detector or PlateDetector()
         self.ocr=ocr or PlateOcr()
         self.readers=defaultdict(lambda: TemporalPlateReader(min_votes=min_votes))
+        self._reader_last_seen: dict[str, float] = {}
+        self.reader_ttl_seconds = 3600.0
 
     @staticmethod
     def _crop(frame,bbox):
@@ -35,12 +38,22 @@ class PlatePipeline:
     def process(self,event:FrameEvent,vehicle_box:BoundingBox|None=None,track_key:str|None=None):
         candidates=list(self.detector.detect(event))
         if vehicle_box is not None:
-            candidates=[d for d in candidates if self._overlap(d.bounding_box,vehicle_box)>0.02] or candidates
+            # A plate read is only valid for the vehicle whose track requested it.
+            # Never fall back to another vehicle's plate when the scoped detector
+            # result has no overlap.
+            candidates=[d for d in candidates if self._overlap(d.bounding_box,vehicle_box)>0.02]
         if not candidates:return None
         detection=max(candidates,key=lambda d:d.confidence)
         crop=self._crop(event.image,detection.bounding_box)
         fact=self.ocr.read_text(crop)
         if fact is None:return None
         key=track_key or f"{event.camera_id}:frame"
+        now=time.time()
+        cutoff=now-self.reader_ttl_seconds
+        for old_key, seen in list(self._reader_last_seen.items()):
+            if seen < cutoff:
+                self._reader_last_seen.pop(old_key, None)
+                self.readers.pop(old_key, None)
+        self._reader_last_seen[key]=now
         voted=self.readers[key].add(fact)
         return {"detection":detection,"ocr":fact,"voted":voted,"crop":crop}

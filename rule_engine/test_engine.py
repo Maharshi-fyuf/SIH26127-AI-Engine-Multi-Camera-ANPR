@@ -36,7 +36,7 @@ class TestRuleEngine(unittest.TestCase):
         if os.path.exists(self.rules_path):
             os.remove(self.rules_path)
 
-    def test_red_light_violation_confirmed(self):
+    def test_red_light_violation_requires_human_review(self):
         facts = {
             "signal_state": "RED",
             "crossed_stop_line": True,
@@ -53,7 +53,7 @@ class TestRuleEngine(unittest.TestCase):
         self.assertEqual(len(events), 1)
         event = events[0]
         self.assertEqual(event.violation_type, "RED_LIGHT_VIOLATION")
-        self.assertEqual(event.status, "confirmed") # Avg conf is ~0.85 > 0.75
+        self.assertEqual(event.status, "needs_review") # High confidence is retained as evidence; review remains mandatory
         self.assertGreater(event.aggregated_confidence, 0.75)
 
     def test_helmet_violation_needs_review(self):

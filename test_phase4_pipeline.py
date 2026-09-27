@@ -1,3 +1,4 @@
+from tests.fixtures import fake_helmet
 import cv2
 import numpy as np
 import time
@@ -69,7 +70,7 @@ def run_pipeline():
         signal_fact = signal_facts[0]
         
         has_crossed_a = stop_line_detector.has_crossed(vehicle_box_a)
-        helmet_facts_a = list(helmet_detector._placeholder_helmet_state(event, vehicle_box_a, synthetic_has_helmet=False, synthetic_confidence=0.85))
+        helmet_facts_a = list(fake_helmet(event, vehicle_box_a, has_helmet=False, confidence=0.85))
         
         agg_facts_a, agg_conf_a = aggregator.update_track(
             track_id="track_99",
