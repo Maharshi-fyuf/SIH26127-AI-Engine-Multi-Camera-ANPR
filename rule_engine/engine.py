@@ -13,6 +13,8 @@ class RuleEngine:
         self.confidence_threshold = confidence_threshold
         self.rules = self._load_rules()
         self.emitted_violations: Dict[str, set] = {}
+        self._last_seen_ms: Dict[str, float] = {}
+        self.state_ttl_ms = 60 * 60 * 1000.0
 
     def _load_rules(self) -> List[Dict[str, Any]]:
         with open(self.rules_path, 'r') as f:
@@ -44,12 +46,19 @@ class RuleEngine:
             logger.warning(f"Unknown operator: {op}")
             return False
 
-    def evaluate(self, track_id: str, camera_id: str, aggregated_facts: Dict[str, Any], confidences: Dict[str, float]) -> List[ViolationEvent]:
+    def evaluate(self, track_id: str, camera_id: str, aggregated_facts: Dict[str, Any], confidences: Dict[str, float], *, timestamp_ms: float | None = None) -> List[ViolationEvent]:
         """
         Evaluates the aggregated facts against the declarative rules.
         """
+        now_ms = timestamp_ms if timestamp_ms is not None else time.time() * 1000.0
+        cutoff = now_ms - self.state_ttl_ms
+        for key, seen_ms in list(self._last_seen_ms.items()):
+            if seen_ms < cutoff:
+                self._last_seen_ms.pop(key, None)
+                self.emitted_violations.pop(key, None)
         violations = []
         scoped_track_key = f"{camera_id}:{track_id}"
+        self._last_seen_ms[scoped_track_key] = now_ms
         if scoped_track_key not in self.emitted_violations:
             self.emitted_violations[scoped_track_key] = set()
         
@@ -79,7 +88,9 @@ class RuleEngine:
 
                 rule_confidence = aggregated_confidence
                 
-                status = "confirmed" if aggregated_confidence >= self.confidence_threshold else "needs_review"
+                # Every machine-detected violation enters human review. Confidence
+                # is preserved as evidence metadata, never as an automatic legal verdict.
+                status = "needs_review"
                 
                 event = ViolationEvent(
                     event_id=str(uuid.uuid4()),
@@ -89,12 +100,14 @@ class RuleEngine:
                     rule_confidence=rule_confidence,
                     aggregated_confidence=aggregated_confidence,
                     status=status,
-                    timestamp_ms=time.time() * 1000.0
+                    timestamp_ms=now_ms,
+                    plate_text=aggregated_facts.get("plate_text"),
+                    plate_confidence=float(aggregated_facts.get("plate_confidence", 0.0) or 0.0),
+                    plate_is_full=bool(aggregated_facts.get("plate_is_full", False))
                 )
                 violations.append(event)
                 
-                # Mark as emitted so we don't duplicate it for this track on future frames
-                if status in ("confirmed", "needs_review"):
-                    self.emitted_violations[scoped_track_key].add(violation_type)
+                # Mark as emitted so we don't duplicate it for this track on future frames.
+                self.emitted_violations[scoped_track_key].add(violation_type)
                 
         return violations

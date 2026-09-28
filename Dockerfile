@@ -11,4 +11,4 @@ COPY . .
 RUN python scripts/bootstrap_models.py --all
 RUN rm -f traffic.db && find . -type d -name '__pycache__' -prune -exec rm -rf {} +
 EXPOSE 8000
-CMD ["uvicorn","api.server:app","--host","0.0.0.0","--port","8000","--workers","2"]
+CMD ["python","run_server.py"]

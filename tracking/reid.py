@@ -41,7 +41,7 @@ class ColorHistogramEmbedder:
     embedding interface that can later be swapped for a learned model.
     """
 
-    def extract(self, frame: FrameEvent, bbox: BoundingBox) -> VehicleEmbedding:
+    def extract(self, frame: FrameEvent, bbox: BoundingBox, track_id: str | int) -> VehicleEmbedding:
         h, w = frame.image.shape[:2]
         x1, y1 = max(0, int(bbox.x1)), max(0, int(bbox.y1))
         x2, y2 = min(w, int(bbox.x2)), min(h, int(bbox.y2))
@@ -56,7 +56,7 @@ class ColorHistogramEmbedder:
         return VehicleEmbedding(
             embedding_id=f"emb_{uuid.uuid4().hex[:10]}",
             camera_id=frame.camera_id,
-            track_id="",
+            track_id=str(track_id),
             timestamp_ms=frame.timestamp_ms,
             vector=vector,
         )

@@ -18,7 +18,7 @@
 - Gmail SMTP/STARTTLS notification adapter.
 - Notification guard: citizen-facing notification is blocked unless the event is explicitly verified by a reviewer/authority.
 - API-key + role authorization primitives and protected evidence endpoint.
-- FastAPI live-server entry point with health check, review, vehicle timeline, evidence and notification APIs.
+- FastAPI live-server entry point with health/review/timeline/evidence/notification APIs plus lifecycle controls for the actual live camera-processing pipeline.
 - Environment-based configuration and `.env.example`.
 - Redis/event-bus-ready architecture remains compatible with the existing in-memory test bus.
 - Retention/governance and accuracy-reporting primitives.
@@ -26,7 +26,7 @@
 
 ## Still requires deployment-specific work
 
-1. Supply and validate specialist Indian plate/helmet/seatbelt weights on representative local footage.
+1. Supply and validate specialist Indian plate/helmet/seatbelt weights on representative local footage; the release bootstraps pinned third-party checkpoints reproducibly but does not claim ownership of them.
 2. Benchmark precision/recall/OCR accuracy; never invent metrics.
 3. Configure real camera URLs and per-camera calibration.
 4. Configure production identity provider/JWT/SSO instead of API keys if required by the authority.

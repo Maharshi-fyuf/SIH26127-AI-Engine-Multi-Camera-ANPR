@@ -60,10 +60,7 @@ class ObjectTracker:
                 if tid in used: continue
                 if getattr(self.config,"distance_function","euclidean") in ("iou","iou_opt"):
                     score=1-self._iou(fact.bbox,t.fact.bbox)
-                    # Norfair accepts a large configured threshold for its IoU distance
-                    # function; keep the fallback behavior compatible by requiring at
-                    # least moderate overlap for the normal 30-point configuration.
-                    match=score <= (0.70 if self.config.max_distance_threshold >= 1 else self.config.max_distance_threshold)
+                    match=score <= self.config.max_distance_threshold
                 else:
                     ax,ay=self._centroid(fact); bx,by=self._centroid(t.fact)
                     score=((ax-bx)**2+(ay-by)**2)**0.5; match=score<=self.config.max_distance_threshold

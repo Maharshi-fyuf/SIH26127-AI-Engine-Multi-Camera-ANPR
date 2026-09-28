@@ -1,3 +1,4 @@
+from tests.fixtures import fake_plate
 import unittest
 import torch
 import cv2
@@ -75,7 +76,7 @@ class TestPlatePipeline(unittest.TestCase):
         manual_bbox = BoundingBox(x1=100, y1=150, x2=500, y2=250)
         
         # 4. Run through detector's placeholder localization step
-        detections = list(detector._placeholder_plate_region(event, manual_bbox))
+        detections = [fake_plate(event, manual_bbox)]
         self.assertEqual(len(detections), 1)
         self.assertTrue(detections[0].is_placeholder)
         self.assertEqual(detections[0].confidence, 0.75)

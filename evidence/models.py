@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import List
+
 @dataclass
 class EvidenceBundle:
     bundle_id: str

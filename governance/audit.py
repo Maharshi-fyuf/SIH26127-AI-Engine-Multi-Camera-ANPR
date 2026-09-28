@@ -9,6 +9,7 @@ class RuleMetrics:
     false_positive: int
     false_negative: int
     human_overrides: int
+    true_negative: int | None = None
 
     @property
     def precision(self) -> float:
@@ -21,8 +22,16 @@ class RuleMetrics:
         return self.true_positive / total if total else 0.0
 
     @property
-    def false_positive_rate(self) -> float:
+    def false_discovery_rate(self) -> float:
         total = self.true_positive + self.false_positive
+        return self.false_positive / total if total else 0.0
+
+    @property
+    def false_positive_rate(self) -> float | None:
+        """True FPR when TN is available; otherwise None because FPR is not identifiable."""
+        if self.true_negative is None:
+            return None
+        total = self.false_positive + self.true_negative
         return self.false_positive / total if total else 0.0
 
 
@@ -32,12 +41,13 @@ def render_accuracy_audit_report(metrics: Iterable[RuleMetrics]) -> str:
         "",
         "Privacy basis: retention and redaction controls are designed around India's Digital Personal Data Protection Act, 2023.",
         "",
-        "| Rule | Precision | Recall | False Positive Rate | Human Overrides |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        "| Rule | Precision | Recall | False Positive Rate | False Discovery Rate | Human Overrides |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in metrics:
+        fpr = "N/A" if item.false_positive_rate is None else f"{item.false_positive_rate:.2f}"
         lines.append(
             f"| {item.violation_type} | {item.precision:.2f} | {item.recall:.2f} | "
-            f"{item.false_positive_rate:.2f} | {item.human_overrides} |"
+            f"{fpr} | {item.false_discovery_rate:.2f} | {item.human_overrides} |"
         )
     return "\n".join(lines) + "\n"
