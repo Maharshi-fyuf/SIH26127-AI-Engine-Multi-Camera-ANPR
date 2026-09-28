@@ -1,0 +1,89 @@
+{
+  "meta": {
+    "title": "YUVATECH traffic control room",
+    "subtitle": "Multi-camera ANPR engine for Smart India Hackathon 2026, problem statement 26127",
+    "is_sample": true
+  },
+  "cameras": [
+    {
+      "id": "cam_junction_a",
+      "frames_total": 1350
+    },
+    {
+      "id": "cam_junction_b",
+      "frames_total": 1350
+    }
+  ],
+  "events": [
+    {
+      "t": 6,
+      "camera": "cam_junction_a",
+      "track": "12",
+      "type": "NO_HELMET_VIOLATION",
+      "plate": null,
+      "conf": 0.81,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 11,
+      "camera": "cam_junction_b",
+      "track": "7",
+      "type": "TRIPLE_RIDING_VIOLATION",
+      "plate": "SAMPLE 0001",
+      "conf": 0.88,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 17,
+      "camera": "cam_junction_a",
+      "track": "19",
+      "type": "RED_LIGHT_VIOLATION",
+      "plate": "SAMPLE 0002",
+      "conf": 0.92,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 24,
+      "camera": "cam_junction_a",
+      "track": "23",
+      "type": "NO_HELMET_VIOLATION",
+      "plate": "SAMPLE 0003",
+      "conf": 0.79,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 31,
+      "camera": "cam_junction_b",
+      "track": "15",
+      "type": "NO_HELMET_VIOLATION",
+      "plate": null,
+      "conf": 0.84,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 38,
+      "camera": "cam_junction_b",
+      "track": "21",
+      "type": "TRIPLE_RIDING_VIOLATION",
+      "plate": "SAMPLE 0004",
+      "conf": 0.9,
+      "status": "needs_review",
+      "evidence": null
+    },
+    {
+      "t": 44,
+      "camera": "cam_junction_a",
+      "track": "31",
+      "type": "RED_LIGHT_VIOLATION",
+      "plate": "SAMPLE 0005",
+      "conf": 0.95,
+      "status": "needs_review",
+      "evidence": null
+    }
+  ]
+}
